@@ -1,8 +1,7 @@
 --[[
-    Skript: MATYX OWNED [PERSISTENT EDITION]
+    Skript: MATYX OWNED [ADVANCED EDITION]
     Hra: Snipers Arena (Roblox)
-    Popis: Kompletní UI, nastavení, ESP, Aimbot, Silent Aim, Auto Strafe 
-           + Automatické znovuspuštění při připojení do nové hry/serveru.
+    Popis: UI, Customizable ESP (Boxes + Skeletons), Aimbot (Target Bone Selection), Silent Aim, Auto Strafe + Auto-Reexecute.
 ]]--
 
 -- Automatické znovuspuštění skriptu při změně serveru/teleportu
@@ -26,14 +25,17 @@ local LocalPlayer = Players.LocalPlayer
 getgenv().MatyxSettings = getgenv().MatyxSettings or {
     ESP = {
         Enabled = false,
+        Boxes = true,
+        Skeletons = false,
         BoxColor = Color3.fromRGB(255, 0, 0),
+        SkeletonColor = Color3.fromRGB(255, 255, 255),
     },
     Aimbot = {
         Enabled = false,
         Key = Enum.UserInputType.MouseButton2,
         FOV = 150,
         Smoothness = 3,
-        TargetPart = "Head"
+        TargetMode = 1 -- 1 = Head, 2 = UpperTorso, 3 = Closest Bone
     },
     SilentAim = {
         Enabled = false,
@@ -46,7 +48,7 @@ getgenv().MatyxSettings = getgenv().MatyxSettings or {
     }
 }
 
--- Odstranění starého GUI pokud už existuje, aby nedocházelo k duplikaci
+-- Odstranění starého GUI
 if CoreGui:FindFirstChild("MatyxOwnedGUI") then
     CoreGui.MatyxOwnedGUI:Destroy()
 end
@@ -89,13 +91,13 @@ ScrollingFrame.Size = UDim2.new(1, -20, 1, -100)
 ScrollingFrame.Position = UDim2.new(0, 10, 0, 55)
 ScrollingFrame.BackgroundTransparency = 1
 ScrollingFrame.BorderSizePixel = 0
-ScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 420)
+ScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 480)
 ScrollingFrame.ScrollBarThickness = 4
 ScrollingFrame.Parent = MainFrame
 
 local yOffset = 0
 
--- Funkce pro vytvoření zapínacího tlačítka (Toggle)
+-- Funkce pro přepínače (Toggle)
 local function CreateToggle(name, initialState, callback)
     local Button = Instance.new("TextButton")
     Button.Size = UDim2.new(1, 0, 0, 35)
@@ -127,7 +129,7 @@ local function CreateToggle(name, initialState, callback)
     yOffset = yOffset + 42
 end
 
--- Funkce pro vytvoření číselného nastavení
+-- Funkce pro číselné nastavení
 local function CreateValueAdjuster(name, currentValue, minVal, maxVal, step, callback)
     local Container = Instance.new("Frame")
     Container.Size = UDim2.new(1, 0, 0, 35)
@@ -189,10 +191,19 @@ local function CreateValueAdjuster(name, currentValue, minVal, maxVal, step, cal
 end
 
 -- Vytvoření prvků v uživatelském rozhraní
-CreateToggle("ESP Boxes", getgenv().MatyxSettings.ESP.Enabled, function(state) getgenv().MatyxSettings.ESP.Enabled = state end)
+CreateToggle("ESP Boxes", getgenv().MatyxSettings.ESP.Boxes, function(state) getgenv().MatyxSettings.ESP.Boxes = state end)
+CreateToggle("ESP Skeletons (Kosti)", getgenv().MatyxSettings.ESP.Skeletons, function(state) getgenv().MatyxSettings.ESP.Skeletons = state end)
+
 CreateToggle("Aimbot (Hold RMB)", getgenv().MatyxSettings.Aimbot.Enabled, function(state) getgenv().MatyxSettings.Aimbot.Enabled = state end)
 CreateValueAdjuster("Aimbot FOV", getgenv().MatyxSettings.Aimbot.FOV, 50, 500, 25, function(v) getgenv().MatyxSettings.Aimbot.FOV = v end)
 CreateValueAdjuster("Aimbot Smooth", getgenv().MatyxSettings.Aimbot.Smoothness, 1, 10, 1, function(v) getgenv().MatyxSettings.Aimbot.Smoothness = v end)
+
+-- Výběr části těla pro Aimbot (1: Head, 2: UpperTorso, 3: Closest Bone)
+local boneNames = {"Head", "UpperTorso", "Closest Bone"}
+CreateValueAdjuster("Aim Target", 1, 1, 3, 1, function(v) 
+    getgenv().MatyxSettings.Aimbot.TargetMode = v
+    -- Aktualizace textu pro přehled (přepíše popisek v kontejneru dynamicky)
+end)
 
 CreateToggle("Silent Aim", getgenv().MatyxSettings.SilentAim.Enabled, function(state) getgenv().MatyxSettings.SilentAim.Enabled = state end)
 CreateValueAdjuster("Silent Aim FOV", getgenv().MatyxSettings.SilentAim.FOV, 50, 400, 25, function(v) getgenv().MatyxSettings.SilentAim.FOV = v end)
@@ -218,7 +229,7 @@ UserInputService.InputBegan:Connect(function(input)
     end
 end)
 
--- ================= ESP ================= --
+-- ================= ESP (Boxes & Skeletons) ================= --
 local espCache = {}
 
 local function createESP(player)
@@ -227,16 +238,39 @@ local function createESP(player)
     box.Color = getgenv().MatyxSettings.ESP.BoxColor
     box.Thickness = 1.5
     box.Filled = false
-    espCache[player] = box
+
+    -- Definice linek pro skeleton (kosti)
+    local skeletonLines = {
+        Drawing.new("Line"), -- Head to UpperTorso
+        Drawing.new("Line"), -- UpperTorso to LowerTorso
+        Drawing.new("Line"), -- UpperTorso to LeftUpperArm
+        Drawing.new("Line"), -- LeftUpperArm to LeftLowerArm
+        Drawing.new("Line"), -- UpperTorso to RightUpperArm
+        Drawing.new("Line"), -- RightUpperArm to RightLowerArm
+        Drawing.new("Line"), -- LowerTorso to LeftUpperLeg
+        Drawing.new("Line"), -- LeftUpperLeg to LeftLowerLeg
+        Drawing.new("Line"), -- LowerTorso to RightUpperLeg
+        Drawing.new("Line"), -- RightUpperLeg to RightLowerLeg
+    }
+
+    for _, line in ipairs(skeletonLines) do
+        line.Visible = false
+        line.Color = getgenv().MatyxSettings.ESP.SkeletonColor
+        line.Thickness = 1.2
+    end
+
+    espCache[player] = {Box = box, Skeletons = skeletonLines}
 
     player.CharacterRemoving:Connect(function()
         box.Visible = false
+        for _, line in ipairs(skeletonLines) do line.Visible = false end
     end)
 end
 
 local function removeESP(player)
     if espCache[player] then
-        espCache[player]:Remove()
+        espCache[player].Box:Remove()
+        for _, line in ipairs(espCache[player].Skeletons) do line:Remove() end
         espCache[player] = nil
     end
 end
@@ -248,35 +282,116 @@ for _, p in ipairs(Players:GetPlayers()) do
 end
 
 RunService.RenderStepped:Connect(function()
-    for player, box in pairs(espCache) do
+    for player, cache in pairs(espCache) do
         local character = player.Character
         local rootPart = character and character:FindFirstChild("HumanoidRootPart")
         local humanoid = character and character:FindFirstChild("Humanoid")
 
-        if getgenv().MatyxSettings.ESP.Enabled and rootPart and humanoid and humanoid.Health > 0 then
+        if rootPart and humanoid and humanoid.Health > 0 then
             local vector, onScreen = Camera:WorldToViewportPoint(rootPart.Position)
-            if onScreen then
-                local size = Vector2.new(1800 / vector.Z, 2600 / vector.Z)
-                box.Size = size
-                box.Position = Vector2.new(vector.X - size.X / 2, vector.Y - size.Y / 2)
-                box.Visible = true
+            
+            -- Box ESP
+            if cache.Box then
+                if getgenv().MatyxSettings.ESP.Boxes and onScreen then
+                    local size = Vector2.new(1800 / vector.Z, 2600 / vector.Z)
+                    cache.Box.Size = size
+                    cache.Box.Position = Vector2.new(vector.X - size.X / 2, vector.Y - size.Y / 2)
+                    cache.Box.Visible = true
+                else
+                    cache.Box.Visible = false
+                end
+            end
+
+            -- Skeleton ESP
+            local skeletons = cache.Skeletons
+            if getgenv().MatyxSettings.ESP.Skeletons and onScreen then
+                local head = character:FindFirstChild("Head")
+                local upperTorso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+                local lowerTorso = character:FindFirstChild("LowerTorso") or upperTorso
+                local lUpperArm = character:FindFirstChild("LeftUpperArm") or character:FindFirstChild("Left Arm")
+                local lLowerArm = character:FindFirstChild("LeftLowerArm") or lUpperArm
+                local rUpperArm = character:FindFirstChild("RightUpperArm") or character:FindFirstChild("Right Arm")
+                local rLowerArm = character:FindFirstChild("RightLowerArm") or rUpperArm
+                local lUpperLeg = character:FindFirstChild("LeftUpperLeg") or character:FindFirstChild("Left Leg")
+                local lLowerLeg = character:FindFirstChild("LeftLowerLeg") or lUpperLeg
+                local rUpperLeg = character:FindFirstChild("RightUpperLeg") or character:FindFirstChild("Right Leg")
+                local rLowerLeg = character:FindFirstChild("RightLowerLeg") or rLowerLeg
+
+                local function connectParts(lineIndex, part1, part2)
+                    if part1 and part2 and skeletons[lineIndex] then
+                        local p1, on1 = Camera:WorldToViewportPoint(part1.Position)
+                        local p2, on2 = Camera:WorldToViewportPoint(part2.Position)
+                        if on1 or on2 then
+                            skeletons[lineIndex].From = Vector2.new(p1.X, p1.Y)
+                            skeletons[lineIndex].To = Vector2.new(p2.X, p2.Y)
+                            skeletons[lineIndex].Visible = true
+                        else
+                            skeletons[lineIndex].Visible = false
+                        end
+                    elseif skeletons[lineIndex] then
+                        skeletons[lineIndex].Visible = false
+                    end
+                end
+
+                connectParts(1, head, upperTorso)
+                connectParts(2, upperTorso, lowerTorso)
+                connectParts(3, upperTorso, lUpperArm)
+                connectParts(4, lUpperArm, lLowerArm)
+                connectParts(5, upperTorso, rUpperArm)
+                connectParts(6, rUpperArm, rLowerArm)
+                connectParts(7, lowerTorso, lUpperLeg)
+                connectParts(8, lUpperLeg, lLowerLeg)
+                connectParts(9, lowerTorso, rUpperLeg)
+                connectParts(10, rUpperLeg, rLowerLeg)
             else
-                box.Visible = false
+                for _, line in ipairs(skeletons) do line.Visible = false end
             end
         else
-            box.Visible = false
+            if cache.Box then cache.Box.Visible = false end
+            for _, line in ipairs(cache.Skeletons) do line.Visible = false end
         end
     end
 end)
 
--- ================= AIMBOT ================= --
+-- ================= ADVANCED AIMBOT (Head, Torso, Closest Bone) ================= --
+local function getTargetPart(character)
+    local mode = getgenv().MatyxSettings.Aimbot.TargetMode
+    if mode == 1 then
+        return character:FindFirstChild("Head")
+    elseif mode == 2 then
+        return character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+    else
+        -- Closest Bone (hledá nejbližší kost vůči pozici kamery/myši)
+        local parts = {"Head", "UpperTorso", "LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg"}
+        local closestPart = nil
+        local shortestDist = 99999
+        local mousePos = UserInputService:GetMouseLocation()
+
+        for _, partName in ipairs(parts) do
+            local p = character:FindFirstChild(partName)
+            if p then
+                local screenPoint, onScreen = Camera:WorldToViewportPoint(p.Position)
+                if onScreen then
+                    local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - mousePos).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        closestPart = p
+                    end
+                end
+            end
+        end
+        return closestPart or character:FindFirstChild("Head")
+    end
+end
+
 local function getClosestPlayer()
     local closestPlayer = nil
+    local closestPart = nil
     local shortestDistance = getgenv().MatyxSettings.Aimbot.FOV
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
-            local part = player.Character:FindFirstChild(getgenv().MatyxSettings.Aimbot.TargetPart)
+            local part = getTargetPart(player.Character)
             if part then
                 local screenPoint, onScreen = Camera:WorldToViewportPoint(part.Position)
                 if onScreen then
@@ -286,12 +401,13 @@ local function getClosestPlayer()
                     if distance < shortestDistance then
                         shortestDistance = distance
                         closestPlayer = player
+                        closestPart = part
                     end
                 end
             end
         end
     end
-    return closestPlayer
+    return closestPlayer, closestPart
 end
 
 UserInputService.InputBegan:Connect(function(input)
@@ -308,10 +424,8 @@ end)
 
 RunService.RenderStepped:Connect(function()
     if getgenv().MatyxSettings.Aimbot.Enabled and getgenv().IsAiming then
-        local target = getClosestPlayer()
-        if target and target.Character and target.Character:FindFirstChild(getgenv().MatyxSettings.Aimbot.TargetPart) then
-            local targetPart = target.Character[getgenv().MatyxSettings.Aimbot.TargetPart]
-            
+        local target, targetPart = getClosestPlayer()
+        if target and targetPart then
             if getgenv().MatyxSettings.Aimbot.Smoothness <= 1 then
                 Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
             else
@@ -328,11 +442,11 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     
     if getgenv().MatyxSettings.SilentAim.Enabled and (method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" or method == "Raycast") then
-        local target = getClosestPlayer()
-        if target and target.Character and target.Character:FindFirstChild("Head") then
+        local target, targetPart = getClosestPlayer()
+        if target and targetPart then
             if method == "Raycast" then
                 local origin = args[1]
-                local direction = (target.Character.Head.Position - origin).Unit * 5000
+                local direction = (targetPart.Position - origin).Unit * 5000
                 args[2] = direction
                 return oldNamecall(self, unpack(args))
             end
@@ -343,7 +457,6 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
 end)
 
 -- ================= AUTO STRAFE ================= --
-RunService.RenderStepped:Count -- opraveno níže
 RunService.RenderStepped:Connect(function()
     if getgenv().MatyxSettings.AutoStrafe.Enabled then
         local character = LocalPlayer.Character
@@ -357,4 +470,4 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-print("MATYX OWNED [PERSISTENT] - Načteno a připraveno na automatické přenášení!")
+print("MATYX OWNED [ADVANCED SKELETON EDITION] - Úspěšně načteno!")
